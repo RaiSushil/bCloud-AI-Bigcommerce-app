@@ -1,0 +1,91 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Note that some adapters may set a maximum length for the String type by default, please ensure your strings are long
+// enough when changing adapters.
+// See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
+// DATABASE_URL: "file:dev.sqlite" on your computer (prisma/dev.sqlite);
+// on Railway a file on the mounted volume, e.g. "file:/data/prod.sqlite".
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// One row per installed BigCommerce store. Why a table: BigCommerce gives the API token
+// only once, at install (/auth), and the app needs it later for syncs and product
+// webhooks, when no merchant is signed in. The token is encrypted (AES-256-GCM, bound
+// to the store hash) and never sent to a browser or logged. Deleted on uninstall.
+model BcStore {
+  storeHash      String   @id // the permanent store id from "stores/{hash}"
+  accessTokenEnc String
+  scope          String
+  ownerId        Int
+  ownerEmail     String?
+  installedAt    DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+// The control panel users who may open the app for a store (multi-user apps).
+// Why a table: BigCommerce tells the app about removed users only once (/remove_user),
+// and the app must refuse their sessions afterwards. Deleted on uninstall.
+model BcStoreUser {
+  storeHash String
+  userId    Int
+  email     String?
+  isOwner   Boolean  @default(false)
+  addedAt   DateTime @default(now())
+
+  @@id([storeHash, userId])
+}
+
+// One row per installed store: the bCloud client it maps to and the dashboard
+// login the server uses for /client-api calls.
+// Why a table: bCloud signs portal calls in with client_id + password and has
+// no way to look these up for us; BigCommerce does not hold them either.
+// The store comes only from the verified BigCommerce session. The row is deleted
+// when the app is uninstalled.
+model BcloudConnection {
+  shop        String   @id // BigCommerce store hash, e.g. abc123
+  clientId    String   @unique // one BigCommerce store per bCloud account: a sync rebuilds the whole tenant
+  passwordEnc String // AES-256-GCM bound to the shop; never sent to a browser or logged
+  siteToken   String? // public, read-only storefront token
+  connectedAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Catalogue sync (Data sync page). Why here and not in bCloud: the ingestion
+  // API key is a per-tenant secret bCloud stores only as a hash, so the app must
+  // keep its own encrypted copy; and a lock is needed so two clicks never start
+  // two full rebuilds. Progress and run history come from bCloud (/client-api/sync, /live-sync).
+  apiKeyEnc       String? // AES-256-GCM, bound to the shop; never sent to a browser or logged
+  apiKeyLast4     String? // display hint only
+  syncState       String    @default("idle") // idle | running | done | done_with_errors | failed
+  syncRunId       String? // fencing token: only the run that claimed the lock may update the row
+  syncStartedAt   DateTime?
+  syncRebuiltAt   DateTime? // set just before POST /ingest/start; from then on the index is partial until the run ends
+  syncHeartbeatAt DateTime? // a running sync with an old heartbeat was interrupted (server restart)
+  syncFinishedAt  DateTime?
+  syncTotal       Int?
+  syncSent        Int?
+  syncIndexed     Int?
+  syncFailed      Int?
+  syncError       String? // safe reason code, never an upstream body
+}
+
+// "Request access" on the Connect page: one open request per shop. Why a table: bCloud
+// answers the request later (its admin reviews it), and the app must keep bCloud's request
+// id to ask for the answer when the merchant comes back. Only what the page shows is kept:
+// no name or phone, and the email only masked. Deleted when the app is uninstalled.
+model BcloudAccessRequest {
+  shop        String    @id // BigCommerce store hash, from the verified session
+  requestId   String // bCloud's id for the request
+  status      String    @default("pending") // pending | approved | declined | connected
+  emailHint   String? // masked, e.g. "pr•••@example.com", display only
+  note        String? // bCloud's short message for the merchant (declined / approved)
+  submittedAt DateTime  @default(now())
+  checkedAt   DateTime? // last time the app asked bCloud for the answer
+  decidedAt   DateTime?
+}

@@ -1,0 +1,249 @@
+<!doctype html><html><head><meta charset="utf-8"><title>bCloud AI Search - Client Dashboard API</title>
+<style>
+body{font:11.5pt/1.5 "Segoe UI",Arial,sans-serif;color:#1d1d1f;margin:0;padding:30px 42px;background:#fff}
+h1{font-size:24pt;margin:0 0 4px}h2{font-size:14.5pt;margin:28px 0 8px;border-bottom:1px solid #d9d9de;padding-bottom:4px;color:#3b2a52}
+h3{font-size:11.5pt;margin:16px 0 4px}
+.sub{color:#555;margin:0 0 16px}
+table{border-collapse:collapse;width:100%;margin:8px 0 12px}td,th{border:1px solid #d9d9de;padding:5px 8px;vertical-align:top;text-align:left}th{background:#f1eef5}
+code,pre{font-family:Consolas,"Courier New",monospace;font-size:9.6pt}
+pre{background:#f6f6f8;border:1px solid #e3e3e8;padding:9px 11px;white-space:pre-wrap;word-break:break-word;margin:6px 0 12px}
+.note{background:#fff7e0;border:1px solid #f0d58a;padding:8px 11px;margin:8px 0 12px}
+figure{margin:12px 0 18px;padding:10px 12px 6px;border:1px solid #e6e1ec;border-radius:12px;background:#fcfbfd;break-inside:avoid}
+figcaption{font-size:10pt;color:#5a5162;margin-top:4px}
+ul{margin:4px 0 10px 20px}li{margin:2px 0}
+.page{break-before:page}
+.ep{break-inside:avoid}
+svg text{font-family:"Segoe UI",Arial,sans-serif}
+</style></head><body>
+<h1>bCloud AI Search — Client Dashboard API</h1>
+<p class="sub">The APIs behind the merchant dashboard (portal.bcloudai.com), for a partner app that wants to show the same pages · October 2026 · No keys are written in this document.</p>
+
+<h2>1. What this is</h2>
+<p>The merchant dashboard at <code>https://portal.bcloudai.com</code> is a web app. It has no data of its own: every number on every page comes from sixteen small JSON endpoints under <code>/client-api</code>. A partner app can call the same endpoints and draw the same pages inside its own screens, for example inside a Shopify app.</p>
+<p>One rule holds everywhere: a client's identity comes only from the session token it got at sign-in, never from the request body or the URL. One client can never read another client's data. A paused client loses access on its next call.</p>
+
+<h2>2. Base URL and sign-in</h2>
+<table><tr><th style="width:26%">Base URL</th><td><code>https://search.bcloudai.com/client-api</code> &nbsp;(the same endpoints are also served at <code>https://portal.bcloudai.com/client-api</code>)</td></tr>
+<tr><th>Format</th><td>HTTPS, JSON in and out. Any origin may call (CORS is open), from a browser or from a server.</td></tr>
+<tr><th>Sign-in</th><td><code>POST /login</code> with the client id and the dashboard password. The answer holds a session token.</td></tr>
+<tr><th>Every other call</th><td>Header <code>Authorization: Bearer &lt;token&gt;</code></td></tr>
+<tr><th>Token life</th><td>8 hours. A <code>401</code> on any call means: sign in again.</td></tr></table>
+<h3>POST /login</h3>
+<pre>{ "client_id": "luna-jewels", "password": "..." }
+
+→ { "token": "...",
+    "client": { "client_id": "luna-jewels", "name": "Luna Jewels", "site_token": "...", "theme": null } }</pre>
+<ul><li>Wrong id or password → <code>401</code>. Too many wrong tries → <code>429</code> for a few minutes.</li>
+<li>A paused or removed client → <code>401 "This account is not active"</code>.</li>
+<li><code>theme</code> is the client's own colours when set in bCloud's admin; otherwise <code>null</code>.</li></ul>
+
+<h3>How a partner app should sign in</h3>
+<p>The merchant should not type a bCloud password inside your app. Your app already receives the client id and the dashboard password from <code>POST /partner/signup</code> when the store installs. Keep both on your app's server. When the merchant opens the dashboard page in your app, your server signs in, keeps the token for its 8 hours, calls the endpoints below and hands the JSON to your page. Nothing secret ever reaches the theme or the browser.</p>
+<figure data-diagram="dashboardFlow"><figcaption>Figure 1 — The merchant never types a bCloud password. Your server signs in once per 8 hours and draws the pages.</figcaption></figure>
+
+<h2 class="page">3. The dashboard menu, page by page</h2>
+<p>This is the menu of <code>portal.bcloudai.com</code> as the merchant sees it, and the endpoints each page is drawn from. Build the same pages in your app from the same calls.</p>
+<table><tr><th style="width:11%">Menu</th><th style="width:16%">Page</th><th style="width:36%">Endpoints it calls</th><th>What the page shows</th></tr>
+<tr><td rowspan="4"><b>Monitor</b></td><td>Overview</td><td><code>GET /me</code> · <code>GET /overview</code> · <code>GET /analytics</code> · <code>GET /billing</code> · <code>GET /events</code></td><td>Welcome card with the catalogue size, this month's searches, clicks, orders and revenue, 14-day chart, top searches, the live-sync card</td></tr>
+<tr><td>Analytics</td><td><code>GET /analytics?source=&amp;size=&amp;days=</code></td><td>Three tabs: all, search box, Ask AI (voice and image too); top queries with clicks, orders, revenue; recent searches; daily chart</td></tr>
+<tr><td>Live activity</td><td><code>GET /events?type=&amp;size=</code></td><td>Shopper events as they happen: views, clicks, add to cart, wishlist, purchases; today's counts; last 24 hours by hour</td></tr>
+<tr><td>Missed searches</td><td><code>GET /overview</code> (<code>zero_top</code>) · <code>GET /products</code> · <code>POST /synonyms</code></td><td>What shoppers typed and found nothing; the merchant looks up the product it should have found and fixes it with a synonym</td></tr>
+<tr><td rowspan="3"><b>Catalogue</b></td><td>Products</td><td><code>GET /products?q=&amp;category=&amp;page=&amp;size=</code></td><td>The store's own products, searchable, with category counts</td></tr>
+<tr><td>Data sync</td><td><code>GET /sync</code> (and <code>GET /live-sync</code> while a sync runs)</td><td>The registered fields and the last 10 sync runs: when, how many products, failures, cost</td></tr>
+<tr><td>Search settings</td><td><code>GET /synonyms</code> · <code>POST /synonyms</code></td><td>Word pairs the engine treats as the same (up to 100), add and remove</td></tr>
+<tr><td><b>Money</b></td><td>Billing</td><td><code>GET /billing</code> · <code>GET /live-sync</code></td><td>This month, past months, recent days, sync runs, total cost of ownership; the running sync's cost so far</td></tr>
+<tr><td rowspan="3"><b>Account</b></td><td>Install &amp; keys</td><td>no extra call: <code>site_token</code> from <code>/login</code> or <code>/me</code></td><td>The public site token and the theme snippet. In a Shopify app this page can simply say "installed by the app".</td></tr>
+<tr><td>Support</td><td><code>GET /tickets</code> · <code>POST /tickets</code> · <code>POST /tickets/reply</code></td><td>Support tickets with bCloud's team: open, reply, resolve</td></tr>
+<tr><td>Settings</td><td><code>GET /me</code> · <code>POST /change-password</code></td><td>Account facts and a password change</td></tr>
+<tr><td><b>Blu</b></td><td>the assistant bubble</td><td><code>POST /assistant</code></td><td>Questions about the store's own numbers; can add a synonym or raise a ticket on request (optional for a partner app)</td></tr></table>
+<figure data-diagram="dashboardPages"><figcaption>Figure 2 — The menu, page by page, and the endpoints each page is drawn from.</figcaption></figure>
+<p>Sixteen endpoints in all. All GET calls take no body. All POST bodies are JSON. Every call except <code>/login</code> needs the <code>Authorization</code> header.</p>
+
+<h2>4. Each endpoint</h2>
+
+<div class="ep"><h3>GET /me</h3>
+<pre>→ { "client_id": "luna-jewels", "name": "Luna Jewels", "site_token": "...", "theme": null,
+    "created_at": "2026-10-12T09:10:00Z", "plan": { ... }, "products": 1840,
+    "doctor": { "last_search_at": "2026-10-13T06:41:12Z", "last_sync": { ...the last run... } } }</pre>
+<p><code>products</code> is the live count in the client's index. <code>doctor.last_search_at</code> is <code>null</code> until the first shopper search; <code>doctor.last_sync</code> is <code>null</code> until the first sync has finished.</p></div>
+
+<div class="ep"><h3>GET /overview</h3>
+<pre>→ { "funnel": { "searches": 1203, "clicks": 410, "orders": 37, "revenue": 2140.50 },     // this month
+    "ctr_pct": 34.1, "conv_pct": 3.1,
+    "clicks_total": 5120, "orders_total": 402, "revenue_total": 25880.00,
+    "products": 1840, "searches_total": 15020, "searches_today": 86, "live_5m": 3, "avg_ms": 212.4,
+    "ai_cost_month": 1.2345, "ai_tokens_month": 418000,
+    "voice_total": 120, "voice_month": 31, "voice_cost_month": 0.0412,
+    "image_total": 44, "image_month": 9, "image_cost_month": 0.0180,
+    "zero_count": 61, "zero_top": [ { "query": "silver anklet", "count": 7 } ],
+    "top": [ { "query": "gold ring", "count": 212, "avg_found": 38.5 } ],
+    "daily": [ { "date": "2026-10-01", "count": 92, "assistant": 11, "voice": 2, "image": 1,
+                 "clicks": 30, "orders": 3, "revenue": 180.00 } ],                      // last 14 days
+    "live_sync": { "active": false } }</pre>
+<p><code>zero_top</code> is the missed-searches list: what shoppers typed and found nothing. <code>ctr_pct</code> and <code>conv_pct</code> are over all time; <code>funnel</code> is this month.</p></div>
+
+<div class="ep"><h3>GET /live-sync</h3>
+<pre>→ { "live_sync": { "active": false } }
+→ { "live_sync": { "active": true, "finished": false, "indexed": 12400, "failed": 3, "total": 20000,
+                   "percent": 62.0, "per_minute": 820.5, "cost": 0.4120, "tokens": 150000,
+                   "elapsed_sec": 905.2, "started_at": "2026-10-13T06:30:00Z" } }</pre>
+<p>Cheap on purpose. Poll it every 2–3 seconds only while a sync is running; otherwise read it from <code>/overview</code>.</p></div>
+
+<div class="ep"><h3>GET /analytics?source=all&amp;size=30&amp;days=7</h3>
+<table><tr><th style="width:18%">Parameter</th><th>Values</th></tr>
+<tr><td><code>source</code></td><td><code>all</code> (default), <code>search</code> (search box), <code>assistant</code> (Ask AI), <code>voice</code>, <code>image</code></td></tr>
+<tr><td><code>size</code></td><td>how many recent searches to return, 1–1000 (default 30)</td></tr>
+<tr><td><code>days</code></td><td>optional window, 1–90. Without it: all time.</td></tr></table>
+<pre>→ { "ok": true, "client_id": "luna-jewels", "total": 15020, "today": 86, "zero_results": 61, "avg_ms": 212.4,
+    "ai_calls": 2100, "tokens": 418000, "cost": 1.2345,
+    "voice_tokens": 0, "voice_cost": 0.0412, "image_tokens": 0, "image_cost": 0.0180, "image_modes": { ... }, "voice_modes": { ... },
+    "by_source": { "search": 12100, "assistant": 2600, "voice": 120, "image": 44 },
+    "clicks": 5120, "orders": 402, "revenue": 25880.00,                                   // only when source=all
+    "top": [ { "query": "gold ring", "count": 212, "avg_found": 38.5, "last": "2026-10-13T06:41:12Z",
+               "clicks": 90, "orders": 8, "revenue": 1440.00, "ctr_pct": 42.5, "conv_pct": 3.8 } ],
+    "recent": [ { "query": "gold ring", "total": 41, "took_ms": 190, "cached": false, "source": "search", "at": "..." } ],
+    "daily": [ { "date": "2026-10-07", "count": 92 } ] }</pre>
+<p>The money columns per query (clicks, orders, revenue, rates) are only on the <code>all</code> view, because shopper events are not tagged by door.</p></div>
+
+<div class="ep"><h3>GET /events?type=all&amp;size=50</h3>
+<p><code>type</code>: <code>all</code> (default, hides impressions), <code>view</code>, <code>impression</code>, <code>click</code>, <code>add_to_cart</code>, <code>wishlist</code>, <code>purchase</code>. <code>size</code> 1–200. An unknown type → <code>400</code>.</p>
+<pre>→ { "counts": { "view": 9000, "click": 5120, "add_to_cart": 900, "purchase": 402 },      // all time
+    "today": { "view": 120, "click": 61, "purchase": 4 }, "today_revenue": 310.00, "live_5m": 3,
+    "hourly": [ { "hour": "06:00", "events": 40, "clicks": 12, "orders": 1 } ],             // last 24 hours
+    "recent": [ { "type": "click", "query": "gold ring", "product_id": "LJ-1021", "product_name": "Classic Gold Band",
+                  "value": 0, "at": "2026-10-13T06:41:12Z", "source": "" } ] }</pre>
+<p><code>product_name</code> is filled from the client's own catalogue when the product is found. For a purchase, <code>value</code> is the order value.</p></div>
+
+<div class="ep"><h3>GET /products?q=ring&amp;category=Rings&amp;page=1&amp;size=24</h3>
+<pre>→ { "total": 312, "page": 1, "size": 24,
+    "items": [ { "id": "LJ-1021", "name": "Classic Gold Band", "image": "https://...", "price": 199.0,
+                 "category": "Rings", "brand": "Luna" } ],
+    "categories": [ { "value": "Rings", "count": 312 }, { "value": "Necklaces", "count": 280 } ] }</pre>
+<p>Page 1–200, size 1–100. The fields are read through the roles the client registered (name, image, price, category, brand), so the answer has the same shape for every catalogue.</p></div>
+
+<div class="ep"><h3>GET /billing</h3>
+<pre>→ { "scope": "client", "client_id": "luna-jewels", "this_month": "2026-10",
+    "current": { "month": "2026-10", "total_cost": 1.65, "ingest_cost": 0.41, "search_cost": 1.24,
+                 "ingest_calls": 2, "search_calls": 2100, "days": 13 },
+    "months": [ { "month": "2026-09", "total_cost": 3.10, ... } ],
+    "all_time_cost": 4.75, "recent_days": [ ...14 days... ], "runs": [ ...up to 50 sync runs... ],
+    "cloud": { "monthly_total": ... },
+    "total_cost_of_ownership": { "month": "2026-10", "cloud_cost": ..., "ai_cost": 1.65, "total": ... } }</pre>
+<p>These are the client's own AI costs in US dollars, built from their sync runs and their shoppers' searches. The plan fee itself is agreed with bCloud separately.</p></div>
+
+<div class="ep"><h3>GET /sync</h3>
+<pre>→ { "registration": { "field_count": 28, "field_names": [ "sku", "title", "price", ... ], "registered_at": "..." },
+    "runs": [ { "client_id": "luna-jewels", "finished_at": "...", "indexed": 1840, "failed": 0, "cost": 0.41, ... } ] }</pre>
+<p><code>registration</code> is <code>null</code> until <code>/fields/register</code> has been called. <code>runs</code> holds the last 10 completed syncs, newest first.</p></div>
+
+<div class="ep"><h3>GET /synonyms · POST /synonyms</h3>
+<pre>GET  → { "synonyms": [ ["sofa", "couch"], ["ring", "band"] ] }
+
+POST { "add": ["necklace", "chain"] }      → { "synonyms": [ ..., ["necklace", "chain"] ] }
+POST { "remove": ["sofa", "couch"] }       → { "synonyms": [ ... ] }</pre>
+<p>Pairs of two words, lower-cased, up to 100 pairs. The search engine reads them at once. A pair already present is not added twice.</p></div>
+
+<div class="ep"><h3>POST /change-password</h3>
+<pre>{ "old_password": "...", "new_password": "..." }      → { "ok": true }</pre>
+<p>The new password needs at least 10 characters. A wrong current password → <code>401</code>. If your app keeps the password on its server, update your copy at the same time, or the next sign-in fails.</p></div>
+
+<div class="ep"><h3>GET /tickets · POST /tickets · POST /tickets/reply</h3>
+<pre>GET  → { "tickets": [ { "id": "aB3...", "subject": "Search misses 'anklet'", "priority": "normal", "status": "open",
+                         "created_at": "...", "updated_at": "...",
+                         "messages": [ { "who": "client", "text": "...", "at": "..." },
+                                       { "who": "support", "text": "...", "at": "..." } ] } ] }
+
+POST /tickets        { "subject": "...", "message": "...", "priority": "normal" }     → { "ok": true, "id": "aB3..." }
+POST /tickets/reply  { "ticket_id": "aB3...", "message": "..." }                        → { "ok": true }
+POST /tickets/reply  { "ticket_id": "aB3...", "resolve": true }                         → { "ok": true }</pre>
+<p>Priority: <code>low</code>, <code>normal</code>, <code>high</code>. Status: <code>open</code> (bCloud's turn), <code>pending</code> (the client's turn), <code>resolved</code>. Subject 3–200 characters, message up to 4000. Only the client's own tickets are visible.</p></div>
+
+<div class="ep"><h3>POST /assistant</h3>
+<pre>{ "question": "Why are my searches for anklet finding nothing?",
+  "history": [ { "who": "user", "text": "..." }, { "who": "blu", "text": "..." } ] }        // history is optional
+
+→ { "answer": "...", "followups": [ "..." ], "goto": "analytics", "find": "anklet", "actions": [ ] }</pre>
+<p>Blu answers only from this client's own dashboard numbers. <code>goto</code> names a page worth opening, <code>find</code> a word to search there; both can be <code>null</code>. When the merchant asks for it, Blu can add or remove a synonym or raise a support ticket; what it did is listed in <code>actions</code>. Limit: 20 questions per client per 10 minutes (<code>429</code>). If the AI is busy → <code>503</code>, try again shortly. This endpoint is optional for a partner app.</p></div>
+
+<h2 class="page">5. Where the numbers come from</h2>
+<p>The dashboard invents nothing. Every page is a view of six stores that are filled by the store's own activity: shoppers searching, the connector syncing, the merchant writing to support. Your app reads them through <code>/client-api</code>, which only ever returns the signed-in client's rows.</p>
+<figure data-diagram="dashboardData"><figcaption>Figure 3 — The six stores behind every page, and who fills them.</figcaption></figure>
+
+<h2>6. Errors</h2>
+<table><tr><th style="width:12%">Code</th><th>Meaning</th><th style="width:34%">What your app should do</th></tr>
+<tr><td>401</td><td>No token, expired token, wrong password, or the client is paused</td><td>Sign in again. If sign-in also fails with "not active", show "search is paused" and stop polling.</td></tr>
+<tr><td>400</td><td>Unknown event type</td><td>Use one of the listed values.</td></tr>
+<tr><td>404</td><td>Ticket not found (or not this client's)</td><td>Refresh the ticket list.</td></tr>
+<tr><td>422</td><td>The body is the wrong shape (missing field, too long, bad priority)</td><td>Fix the request; the answer names the field.</td></tr>
+<tr><td>429</td><td>Too many wrong sign-ins, or the assistant's budget for 10 minutes is used</td><td>Wait a few minutes.</td></tr>
+<tr><td>503</td><td>The assistant could not think right now</td><td>Show "try again in a moment".</td></tr></table>
+
+<h2>7. How often to call</h2>
+<table><tr><th style="width:34%">Endpoint</th><th>Suggested rhythm</th></tr>
+<tr><td><code>/login</code></td><td>Once, then keep the token for 8 hours; sign in again on a <code>401</code>.</td></tr>
+<tr><td><code>/me</code>, <code>/billing</code>, <code>/sync</code>, <code>/synonyms</code>, <code>/tickets</code>, <code>/products</code></td><td>When the page opens, and on a refresh button.</td></tr>
+<tr><td><code>/overview</code>, <code>/analytics</code></td><td>When the page opens; refresh every 30–60 seconds if the page stays open.</td></tr>
+<tr><td><code>/events</code></td><td>Every 5–10 seconds while the live-activity page is open.</td></tr>
+<tr><td><code>/live-sync</code></td><td>Every 2–3 seconds only while <code>active</code> is true; stop when it turns false.</td></tr></table>
+
+<h2 class="page">8. Design and motion — so your pages feel the same</h2>
+<p>The API gives the numbers. This section gives the look and the movement, so the pages inside your app feel like the portal. If you want the exact code of <code>portal.bcloudai.com</code> as well, bCloud can share it as a reference source folder (section 9).</p>
+<figure data-diagram="dashboardDesign"><figcaption>Figure 4 — The portal's look (left) and the twelve motion and colour rules (right).</figcaption></figure>
+<h3>Colour and type</h3>
+<table><tr><th style="width:26%">Token</th><th style="width:22%">Value</th><th>Where</th></tr>
+<tr><td>Page canvas</td><td><code>#EFECF7</code></td><td>behind everything, with two soft radial glows <code>#E0DAF3</code> / <code>#D8D1EE</code></td></tr>
+<tr><td>Card</td><td><code>#FBFAFF</code></td><td>every panel and KPI tile; radius 16 px; a soft shadow plus a 1 px highlight (<code>elev-1</code>)</td></tr>
+<tr><td>Floating / chips</td><td><code>#FFFFFF</code></td><td>menus, chips, the glass sidebar (blur 14 px)</td></tr>
+<tr><td>Ink</td><td><code>#201D33</code></td><td>text; muted text <code>#6B6A8A</code></td></tr>
+<tr><td>Accent (violet)</td><td><code>#6D4AFF</code> / <code>#5B3BD6</code></td><td>buttons, active menu item, chart lines, KPI numbers, the live dot</td></tr>
+<tr><td>Money (amber)</td><td><code>#B8620A</code></td><td>revenue and cost figures</td></tr>
+<tr><td>Error (coral)</td><td><code>#C4422C</code></td><td>errors, the missed-searches badge</td></tr>
+<tr><td>Image door (cyan)</td><td><code>#0B7C9C</code></td><td>anything about photo search</td></tr>
+<tr><td>Lines and fills</td><td><code>rgba(20,16,43, .06–.15)</code></td><td>borders and subtle fills, never solid grey</td></tr>
+<tr><td>Font</td><td>Inter Variable</td><td>everywhere; numbers in tabular figures so columns do not jump</td></tr>
+<tr><td>Icons</td><td>Lucide</td><td>1.5 px stroke, 15–18 px</td></tr>
+<tr><td>Client colours</td><td><code>theme</code> from <code>/login</code></td><td>when set, the client's own accent, second accent and ground tint the portal; otherwise the defaults above</td></tr></table>
+<h3>Layout</h3>
+<ul><li>Left sidebar, glass, 224 px wide (an icon rail of 76 px on tablets, a bottom bar on phones). Four groups with small pink group labels: <b>Monitor</b> (Overview, Analytics, Live activity, Missed searches), <b>Catalogue</b> (Products, Data sync, Search settings), <b>Money</b> (Billing), <b>Account</b> (Install &amp; keys, Support). Settings and sign-out sit in the header.</li>
+<li>Content: a welcome card, a row of KPI tiles, then full-width panels with charts and tables. Recharts for every chart; one data point shows as a full-width block, never a single dot.</li>
+<li>Blu, the assistant, is a bubble at the bottom right; it opens a chat sheet.</li></ul>
+<h3>Motion</h3>
+<table><tr><th style="width:26%">Moment</th><th>What moves</th></tr>
+<tr><td>A page opens</td><td>the page fades in and rises 8 px over 0.22 s; cards inside rise 14 px over 0.45 s, each 45 ms after the one before (<code>page-enter</code>, <code>card-in</code>, <code>stagger</code>)</td></tr>
+<tr><td>A KPI number arrives</td><td>it counts up from 0 to its value over 0.7 s; when a live value changes it flashes once (<code>kpi-flash</code>)</td></tr>
+<tr><td>Shoppers are searching</td><td>the live dot pings once a second (<code>live-ping</code>); the welcome line says how many</td></tr>
+<tr><td>The pointer crosses a card</td><td>the card tilts up to 4° and a soft spotlight follows the pointer (<code>data-tilt</code>); off on touch screens</td></tr>
+<tr><td>A chart gets its first data</td><td>lines and bars draw themselves once; a later poll updates numbers without re-animating</td></tr>
+<tr><td>A sync is running</td><td>the live-sync card shows a moving bar and a cost that ticks; it stays 90 s after the run completes</td></tr>
+<tr><td>Sign-in</td><td>a drifting starfield behind the form (three.js, lazy loaded); the button has a gradient sheen that sweeps once</td></tr>
+<tr><td>Loading</td><td>a small 3D loader (<code>ld3</code>): a box that breathes and floats over a glowing ring with the bCloud chip</td></tr>
+<tr><td>Blu</td><td>the robot floats, blinks and glows; chat bubbles pop in; a typing indicator bounces while it thinks</td></tr>
+<tr><td>Reduced motion</td><td>when the visitor's system asks for reduced motion, every animation is off and numbers simply appear</td></tr></table>
+<p>Inside a Shopify embedded app you will use Polaris for the frame. Keep Polaris for navigation and forms, and keep the portal's violet accent, the KPI count-up, the live dot and the staggered card entrance for the content. That is enough for a merchant to recognise the same product in both places.</p>
+
+<h2 class="page">9. The reference source (on request)</h2>
+<p>On request, bCloud shares <code>dashboard-reference/</code>, the complete front end of <code>portal.bcloudai.com</code>: React 18, Vite, Tailwind, Recharts, Lucide, three.js. No keys or secrets are inside. Run it on your machine against the live API and sign in with the test client you were given; every page, animation and chart is then in front of you, with its source.</p>
+<pre>cd dashboard-reference
+npm install
+npm run dev            # opens http://localhost:5174 - /client-api is proxied to the live server</pre>
+<table><tr><th style="width:30%">File</th><th>What it holds</th></tr>
+<tr><td><code>src/App.jsx</code></td><td>the shell: sign-in gate, sidebar groups, header, page switch, Blu bubble</td></tr>
+<tr><td><code>src/pages/*.jsx</code></td><td>one file per menu page: Overview, Analytics, Events (live activity), Missed, Products, Sync, SearchSettings, Billing, Widget (install &amp; keys), Support, Settings, Login</td></tr>
+<tr><td><code>src/api.js</code></td><td>every call to <code>/client-api</code>, the token in <code>Authorization</code>, the 401 → sign-in rule</td></tr>
+<tr><td><code>src/ui.jsx</code></td><td>the shared pieces: KPI tile with count-up, Panel, chips, badges, tables, page labels</td></tr>
+<tr><td><code>src/theme.css</code></td><td>all colour tokens, card elevations, glass, and every keyframe animation</td></tr>
+<tr><td><code>src/motion.js</code></td><td>reduced-motion check, pointer tilt and spotlight, chart entrance rule</td></tr>
+<tr><td><code>src/brand.js</code></td><td>how a client's own colours (<code>theme</code>) tint the portal</td></tr>
+<tr><td><code>src/blu.jsx</code>, <code>src/BluAssistant.jsx</code></td><td>the robot and its chat sheet (<code>/assistant</code>)</td></tr>
+<tr><td><code>src/three3d.jsx</code>, <code>src/lazy3d.jsx</code></td><td>the sign-in starfield, lazy loaded</td></tr>
+<tr><td><code>src/IndexLens.jsx</code>, <code>src/lens.css</code></td><td>the "living index" picture on the overview</td></tr>
+<tr><td><code>src/ReportPDF.jsx</code></td><td>the printable monthly report</td></tr>
+<tr><td><code>src/VoiceTester.jsx</code>, <code>src/ImageTester.jsx</code></td><td>the try-it panels for voice and photo search</td></tr>
+<tr><td><code>src/responsive.css</code></td><td>tablet rail and phone bar</td></tr></table>
+
+<h2>10. Checklist</h2>
+<table><tr><th style="width:50%">bCloud gives the partner</th><th>The partner builds</th></tr>
+<tr><td><ul><li>This document and the Partner Integration Guide; the reference source folder on request</li><li>The partner key (privately, separate from any document)</li><li>A test client with a dashboard login, so every endpoint can be tried today</li><li>Nothing to allow-list: the API already accepts calls from any domain. Send us your app's dev domain anyway; we record it, and if we ever tighten the origin rules it is already on the list.</li></ul></td>
+<td><ul><li>The signup form in the app that calls <code>/partner/signup</code> and stores the four values on the app's server</li><li>A server route that signs in with <code>/login</code> and keeps the token</li><li>The dashboard pages, drawn from the endpoints in section 3, in the order that suits the app (Home → Analytics → Live activity → Catalogue → Sync → Billing → Synonyms → Support)</li><li>A "paused" state when sign-in answers "not active"</li></ul></td></tr></table>
+<script src="diagrams.js"></script>
+</body></html>
